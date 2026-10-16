@@ -47,6 +47,11 @@
       "floor": 95.9,
       "reason": "the per-package coverage gate itself: a bug here would pass the regressions it exists to catch"
     },
+    "github.com/soroauth/soroauth-go/scripts/docsite": {
+      "measured": 88.78,
+      "floor": 88.7,
+      "reason": "the documentation site generator and internal link/anchor checker: a bug here ships broken links or omits docs"
+    },
     "github.com/soroauth/soroauth-go/server": {
       "measured": 66.1,
       "floor": 66.1,

@@ -204,6 +204,7 @@
     "docker",
     "dockerfile",
     "docs",
+    "docsite",
     "draft",
     "e2e",
     "ed25519",

@@ -444,7 +444,8 @@ Most first-run problems are environmental — an unreachable RPC endpoint, a
 mistyped secret variable name, a Go toolchain older than this module needs — and
 the error from `sign` or `payload` does not say so. `doctor` checks three things
 and reports each as pass or fail: never printing a secret, only whether it is
-set.
+set. It also reports which configuration file was loaded and which precedence
+layer (`flag`, `env`, `file`, or `default`) supplied each resolved setting.
 
 ```sh
 # Human-readable
@@ -455,7 +456,7 @@ set.
 ```
 
 ```json
-{"checks":[{"name":"go toolchain","pass":true,"detail":"go1.25.4"},{"name":"network","pass":true,"detail":"https://soroban-testnet.stellar.org reachable (HTTP 405)"},{"name":"secret env: SEED","pass":true,"detail":"SEED is set"}],"ok":true}
+{"checks":[{"name":"go toolchain","pass":true,"detail":"go1.25.4"},{"name":"network","pass":true,"detail":"https://soroban-testnet.stellar.org reachable (HTTP 405)"},{"name":"secret env: SEED","pass":true,"detail":"SEED is set"}],"config":{"file_source":"none","values":[{"key":"network","value":"","source":"default"},{"key":"rpc_url","value":"https://soroban-testnet.stellar.org","source":"flag"},{"key":"secret_env","value":"SEED","source":"flag"},{"key":"format","value":"","source":"default"}]},"ok":true}
 ```
 
 `--secret-env` is optional; when omitted, that check is skipped rather than
@@ -464,6 +465,61 @@ HTTP response — including a non-2xx status — counts the network check as
 passing, since it proves DNS, TCP and TLS all worked; only a transport-level
 error (DNS failure, connection refused, timeout) fails it. Exit code is 0 when
 every check passes, 1 if any fails.
+
+### Configuration file and precedence
+
+Subcommands that accept `--network`, `--rpc-url`, `--secret-env`, or `--format`
+can read defaults from a JSON configuration file (`--config <path>`,
+`$SOROAUTH_CONFIG`, or `$XDG_CONFIG_HOME/soroauth/config.json` /
+`~/.config/soroauth/config.json`). A missing default config file is not an
+error; an explicit `--config` path that does not exist, or any unparseable file,
+is an error.
+
+Values resolve in strict precedence order:
+
+1. `flag` — explicit command-line flag (`--network`, `--rpc-url`,
+   `--secret-env`, `--format`)
+2. `env` — environment variable (`SOROAUTH_NETWORK`, `SOROAUTH_RPC_URL`,
+   `SOROAUTH_SECRET_ENV`, `SOROAUTH_FORMAT`)
+3. `file` — JSON configuration file (`network`, `rpc_url`, `secret_env`,
+   `format`)
+4. `default` — built-in default
+
+```json
+{
+  "network": "testnet",
+  "rpc_url": "https://soroban-testnet.stellar.org",
+  "secret_env": "SOROAUTH_SEED",
+  "format": "json"
+}
+```
+
+No secret value may be stored in the configuration file. `secret_env` accepts
+only the POSIX name of an environment variable (`[A-Za-z_][A-Za-z0-9_]*`); any
+Stellar strkey seed (`S...`), hex key, PEM block, or secret-bearing field name
+(`secret`, `seed`, `private_key`) is refused before the command runs, and the
+refused value is never echoed.
+
+### External signer (`--signer-cmd`)
+
+`soroauth sign` can delegate signing to an external helper executable via
+`--signer-cmd <path>` (with `--signer-timeout`, default `10s`) instead of
+`--secret-env`. The CLI invokes the helper once per target credential node and
+speaks the same JSON protocol on stdin/stdout that `remote/protocol.go` defines
+for HTTP:
+
+- **stdin (`remote.Request`)**:
+  `{"version": 1, "address": "G...", "preimage": "<base64 HashIdPreimage>", "payload": "<64-char hex sha256>"}`
+- **stdout (`remote.Response`)**: `{"signature": "<base64 XDR ScVal>"}` or
+  `{"error": "<reason>"}`
+
+Passing the full `preimage` alongside `payload` lets the helper inspect and
+recompute the SHA-256 digest or display the invocation details to a user before
+approving. The CLI validates the returned `signature` as a well-formed,
+non-placeholder `ScVal` (and verifies classic account `ScvVec` signatures over
+the payload) before writing it into the entry. Helper non-zero exit, timeout,
+and malformed output are reported as distinct errors, and no secret environment
+variables are inherited by the helper process.
 
 ### Cross-compile — build binaries for multiple targets
 
@@ -523,10 +579,14 @@ GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -ldflags="-s -w" -o soroauth-arm6
 
 `soroauth completions --shell bash|zsh|fish` prints a completion script for that
 shell on stdout. The scripts complete the subcommands, each subcommand's flags,
-and the enumerable flag values (`--shell`, `--format`, `--network`'s three named
-shorthands); fish additionally shows each flag's description in the tab menu.
-`--secret-env` is completed by name only — the shells never see or complete a
-variable's value.
+every enumerable flag value (`--shell`, `--format` on `payload`, `inspect`,
+`verify`, `diff`, `tree`, and `man`, and `--network`'s three named shorthands
+`testnet`, `futurenet`, `public` while still allowing literal passphrases), and
+dynamic credential addresses (`--address`, `--delegate`) extracted from an
+`--entry` already supplied on the command line; fish additionally shows each
+flag's description in the tab menu. Dynamic address completion parses XDR only
+and never executes entry contents or runs a signer. `--secret-env` is completed
+by name only — the shells never see or complete a variable's value.
 
 Install by shell:
 
